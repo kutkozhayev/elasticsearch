@@ -1,0 +1,141 @@
+1. Разверните и подготовьте окружение
+
+*****************************************************************************************************************
+DONE! Connect to Confluent Control Center at http://localhost:9021 (login as superUser/superUser for full access)
+*****************************************************************************************************************
+
+2. Создайте KSQL Stream WIKILANG
+
+CREATE STREAM wikilang WITH (KAFKA_TOPIC='WIKIPEDIANOBOT', PARTITIONS=2, REPLICAS=2) AS 
+SELECT createdat, channel, username, wikipage, diffurl FROM WIKIPEDIA
+WHERE channel != '#en.wikipedia' AND channel != '#commons.wikimedia' AND NOT username like '%Bot';
+
+3. Мониторинг WIKILANG
+
+ksql> describe extended wikilang;
+
+Name                 : WIKILANG
+Type                 : STREAM
+Key field            : 
+Key format           : STRING
+Timestamp field      : Not set - using <ROWTIME>
+Value format         : AVRO
+Kafka topic          : WIKIPEDIANOBOT (partitions: 2, replication: 2)
+
+ Field     | Type                      
+---------------------------------------
+ ROWTIME   | BIGINT           (system) 
+ ROWKEY    | VARCHAR(STRING)  (system) 
+ CREATEDAT | BIGINT                    
+ CHANNEL   | VARCHAR(STRING)           
+ USERNAME  | VARCHAR(STRING)           
+ WIKIPAGE  | VARCHAR(STRING)           
+ DIFFURL   | VARCHAR(STRING)           
+---------------------------------------
+
+Queries that write from this STREAM
+-----------------------------------
+CSAS_WIKILANG_7 : CREATE STREAM WIKILANG WITH (KAFKA_TOPIC='WIKIPEDIANOBOT', PARTITIONS=2, REPLICAS=2) AS SELECT
+  WIKIPEDIA.CREATEDAT "CREATEDAT",
+  WIKIPEDIA.CHANNEL "CHANNEL",
+  WIKIPEDIA.USERNAME "USERNAME",
+  WIKIPEDIA.WIKIPAGE "WIKIPAGE",
+  WIKIPEDIA.DIFFURL "DIFFURL"
+FROM WIKIPEDIA WIKIPEDIA
+WHERE (((WIKIPEDIA.CHANNEL <> '#en.wikipedia') AND (WIKIPEDIA.CHANNEL <> '#commons.wikimedia')) AND (NOT (WIKIPEDIA.USERNAME LIKE '%Bot')))
+EMIT CHANGES;
+
+For query topology and execution plan please run: EXPLAIN <QueryId>
+
+Local runtime statistics
+------------------------
+messages-per-sec:      6.10   total-messages:     41619     last-message: 2020-03-15T15:33:48.188Z
+
+(Statistics of the local KSQL server interaction with the Kafka topic WIKIPEDIANOBOT)
+ksql> 
+
+В KSQL CLI получите текущую статистику WIKIPEDIANOBOT: describe extended wikipedianobot;
+Приложите раздел Local runtime statistics к ответу на задание.
+
+ksql> describe extended wikipedianobot;
+...
+Local runtime statistics
+------------------------
+messages-per-sec:      4.80   total-messages:      1455     last-message: 2019-11-06T14:01:10.961Z
+
+(Statistics of the local KSQL server interaction with the Kafka topic WIKIPEDIANOBOT)
+ksql>
+
+Почему для wikipedianobot интерфейс показывает также consumer-* метрики?
+
+Потому что есть консьюмеры
+
+4. Добавьте данные из стрима WIKILANG в ElasticSearch
+
+a) Опишите что делает каждая из этих операций?
+
+set_elasticsearch_mapping_lang.sh создаёт mapping
+submit_elastic_sink_lang_config.sh создаёт Sink Connector
+index-pattern - создаёт шаблон индекса
+
+б) Зачем Elasticsearch нужен mapping чтобы принять данные?
+
+Мы явно указываем тип каждого поля и дополнительные параметры, такие как анализатор, дефолтное значение, source и так далее.
+
+в) Что дает index-pattern?
+
+Cодержит набор данных для визуализации.
+
+5. Создайте отчет "Топ10 национальных разделов" на базе индекса wikilang
+
+CHANNEL.keyword:Descending 	Count 
+#commons.wikimedia	        1,253
+#zh.wikipedia	            155
+#en.wikipedia	            149
+#fr.wikipedia	            144
+#it.wikipedia	            58
+#es.wikipedia	            20
+#uk.wikipedia	            18
+#ru.wikipedia	            17
+#de.wikipedia	            12
+#eu.wikipedia	            1
+
+Нажав маленьку круглую кнопку со стрелкой вверх под отчетом, вы сможете запросить не только таблицу, но и запрос на Query DSL которым он получен.
+Приложите тело запроса к заданию.
+
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match_all": {}
+        },
+        {
+          "range": {
+            "CREATEDAT": {
+              "gte": 1584286208834,
+              "lte": 1584287108834,
+              "format": "epoch_millis"
+            }
+          }
+        }
+      ],
+      "must_not": []
+    }
+  },
+  "_source": {
+    "excludes": []
+  },
+  "aggs": {
+    "2": {
+      "terms": {
+        "field": "CHANNEL.keyword",
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}
